@@ -34,15 +34,12 @@ class VNCClient:
         # 建立 TCP 连接（带超时）
         self.socket.settimeout(self.timeout)
         self.socket.connect((self.host, self.port))
-        
         # RFB 协议版本握手
         server_version = self._recv_with_timeout(12, "RFB version handshake")
         if not server_version.startswith(b"RFB"):
             raise Exception("Invalid RFB protocol version")
-        
         # 发送客户端版本
         self.socket.send(RFB_VERSION_3_8)
-        
         # 安全类型协商
         security_types_length = struct.unpack("!B", self._recv_with_timeout(1, "security types length"))[0]
         if security_types_length == 0:
@@ -50,9 +47,7 @@ class VNCClient:
             reason_length = struct.unpack("!I", self.socket.recv(4))[0]
             reason = self.socket.recv(reason_length).decode('utf-8')
             raise Exception(f"Connection failed: {reason}")
-        
         security_types = self._recv_with_timeout(security_types_length, "security types")
-        
         # 选择安全类型（优先选择无认证）
         if SECURITY_NONE in security_types:
             self.socket.send(struct.pack("!B", SECURITY_NONE))
@@ -63,47 +58,36 @@ class VNCClient:
             self._vnc_auth()
         else:
             raise Exception("No supported security type")
-        
         # 检查安全结果（仅对 VNC 认证）
         if SECURITY_VNC_AUTH in security_types and self.password:
             security_result = struct.unpack("!I", self._recv_with_timeout(4, "security result"))[0]
             if security_result != 0:
                 raise Exception("VNC authentication failed")
-        
         # 客户端初始化
         self.socket.send(pack_client_init(shared=True))
-        
         # 服务器初始化
         server_init = self._recv_with_timeout(24, "server initialization")
         self.width, self.height = struct.unpack("!HH", server_init[:4])
-        
         # 解析像素格式
         pixel_format_data = server_init[4:20]
         self.pixel_format = PixelFormat.unpack(pixel_format_data)
-        
         # 服务器名称
         name_length = struct.unpack("!I", server_init[20:24])[0]
         server_name = self._recv_with_timeout(name_length, "server name").decode('utf-8')
-        
         print(f"Connected to VNC server: {server_name} ({self.width}x{self.height})")
-        
         # 设置编码
         self.socket.send(pack_set_encodings([ENCODING_RAW]))
-        
         # 初始化 framebuffer
         self.framebuffer = np.zeros((self.height, self.width, 3), dtype=np.uint8)
         self._last_frame = self.framebuffer.copy()
 
-    
     def _vnc_auth(self):
-        """处理 VNC 认证 - 使用正确的 DES 加密"""
+        """处理 VNC 认证 - 按照 RFC 6143 协议使用 DES 加密"""
         # 接收挑战
         challenge = self._recv_with_timeout(16, "VNC authentication challenge")
-        
         # VNC 密码需要反转每个字节的位顺序
         password_bytes = self.password.encode('utf-8')[:8].ljust(8, b'\x00')
         reversed_password = bytes([self._reverse_bits(b) for b in password_bytes])
-        
         # DES 加密挑战
         response = self._des_encrypt(challenge, reversed_password)
         self.socket.send(response)
@@ -117,18 +101,15 @@ class VNCClient:
         return result
     
     def _des_encrypt(self, data, key):
-        """简单的 DES 加密实现（实际项目中应该使用 pyDes 或其他 DES 库）"""
-        # 这是一个简化版本，实际 VNC 使用标准的 DES ECB 模式
-        # 这里使用 Python 内置的加密库
+        """VNC 协议标准的 DES 加密实现"""
+        # VNC 协议 (RFC 6143) 规定使用 DES ECB 模式进行密码验证
+        # 这是标准实现，使用 pycryptodome 库
         from Crypto.Cipher import DES
-        
         # 确保数据是 8 字节的倍数
         if len(data) % 8 != 0:
             data = data.ljust((len(data) + 7) // 8 * 8, b'\x00')
-        
         # 创建 DES 加密器
         cipher = DES.new(key, DES.MODE_ECB)
-        
         # 加密数据
         return cipher.encrypt(data)
         
@@ -300,6 +281,8 @@ class VNCClient:
     
     def _parse_raw_pixels(self, data: bytes, width: int, height: int) -> np.ndarray:
         """解析 RAW 像素数据为 RGB 数组"""
+        if self.pixel_format is None:
+            raise Exception("Pixel format not initialized - connection may have failed")
         bytes_per_pixel = self.pixel_format.bits_per_pixel // 8
         
         if bytes_per_pixel == 4:  # 32-bit
@@ -341,7 +324,7 @@ class VNCClient:
     
     def has_valid_frame(self) -> bool:
         """检查是否有有效的帧数据（非全黑）"""
-        return self._frame_updated and self._last_frame is not None and np.any(self._last_frame != 0)
+        return self._frame_updated and self._last_frame is not None and bool(np.any(self._last_frame != 0))
             
     def mouse_move(self, x: int, y: int):
         """移动鼠标到指定坐标"""
