@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="vncx",
-    version="1.0.2",
+    version="1.1.0",
     author="stdeson",
     author_email="stdeson@gmail.com",
     description="A lightweight VNC client library for Python",

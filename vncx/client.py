@@ -24,6 +24,7 @@ class VNCClient:
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.width = 0
         self.height = 0
+        self._mouse_pos = (0, 0)  # 跟踪当前鼠标位置
         self.pixel_format = None
         self.framebuffer = None
         self._last_frame = None
@@ -325,71 +326,52 @@ class VNCClient:
             
     def mouse_move(self, x: int, y: int):
         """移动鼠标到指定坐标"""
-        if not self.socket:
-            raise Exception("Not connected to VNC server")
-        
-        # 发送鼠标移动事件（不按任何按键）
+        # 更新并发送鼠标位置
+        self._mouse_pos = (x, y)
         pointer_event = pack_pointer_event(0, x, y)
         self.socket.send(pointer_event)
         
-    def mouse_click(self, button: int):
+    def mouse_click(self, button: int, sleep_time=50):
         """点击鼠标按键 (1=左键, 2=中键, 4=右键)"""
         self.mouse_down(button)
+        time.sleep(sleep_time / 1000)
         self.mouse_up(button)
         
     def mouse_down(self, button: int):
         """按下鼠标按键"""
-        if not self.socket:
-            raise Exception("Not connected to VNC server")
-        
-        # 获取当前鼠标位置（简化处理，使用屏幕中心）
-        x, y = self.width // 2, self.height // 2
+        # 使用当前鼠标位置
+        x, y = self._mouse_pos
         pointer_event = pack_pointer_event(button, x, y)
         self.socket.send(pointer_event)
         
     def mouse_up(self, button: int):
         """释放鼠标按键"""
-        if not self.socket:
-            raise Exception("Not connected to VNC server")
-        
-        # 获取当前鼠标位置（简化处理，使用屏幕中心）
-        x, y = self.width // 2, self.height // 2
+        # 使用当前鼠标位置
+        x, y = self._mouse_pos
         pointer_event = pack_pointer_event(0, x, y)  # 按键状态为 0 表示释放
         self.socket.send(pointer_event)
         
     def mouse_roll_up(self):
         """鼠标滚轮向上"""
-        if not self.socket:
-            raise Exception("Not connected to VNC server")
-        
         # 鼠标滚轮向上通常是按钮 8
-        x, y = self.width // 2, self.height // 2
+        x, y = self._mouse_pos
         self.socket.send(pack_pointer_event(8, x, y))  # 按下
         self.socket.send(pack_pointer_event(0, x, y))  # 释放
         
     def mouse_roll_down(self):
         """鼠标滚轮向下"""
-        if not self.socket:
-            raise Exception("Not connected to VNC server")
-        
         # 鼠标滚轮向下通常是按钮 16
-        x, y = self.width // 2, self.height // 2
+        x, y = self._mouse_pos
         self.socket.send(pack_pointer_event(16, x, y))  # 按下
         self.socket.send(pack_pointer_event(0, x, y))   # 释放
         
     def key_down(self, key_code: int):
         """按下键盘按键"""
-        if not self.socket:
-            raise Exception("Not connected to VNC server")
-        
         key_event = pack_key_event(True, key_code)
         self.socket.send(key_event)
         
     def key_up(self, key_code: int):
         """释放键盘按键"""
-        if not self.socket:
-            raise Exception("Not connected to VNC server")
-        
         key_event = pack_key_event(False, key_code)
         self.socket.send(key_event)
         
@@ -403,15 +385,12 @@ class VNCClient:
         # 发送全屏更新请求
         request = pack_framebuffer_update_request(False, 0, 0, self.width, self.height)
         self.socket.send(request)
-        
         # 接收并处理服务器响应
         try:
             response = self._recv_with_timeout(4, "initial framebuffer update response")
             msg_type, num_rectangles = struct.unpack("!B x H", response)
-            
             if msg_type != SERVER_FRAMEBUFFER_UPDATE:
                 return
-            
             # 处理所有矩形区域
             for _ in range(num_rectangles):
                 rect_header = self._recv_with_timeout(12, "initial rectangle header")
