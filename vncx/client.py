@@ -218,12 +218,12 @@ class VNCClient:
         
         # 更新主 framebuffer 并维护帧缓冲
         if x == 0 and y == 0 and width == self.width and height == self.height:
-            print('全屏更新，直接替换')
+            # '全屏更新，直接替换
             self.framebuffer = region_data.copy()
             self._last_frame = self.framebuffer.copy()
             self._frame_updated = True
         else:
-            print('区域更新，合并到现有帧')
+            # 区域更新，合并到现有帧
             if self.framebuffer is None:
                 # 初始化framebuffer
                 self.framebuffer = np.zeros((self.height, self.width, 3), dtype=np.uint8)
@@ -295,12 +295,6 @@ class VNCClient:
             # 转换为RGB（丢弃alpha通道）
             # BGRA -> RGB: 取BGR通道，忽略A通道
             pixels_rgb = pixels_bgra[:, :, [2, 1, 0]]  # BGR -> RGB
-            
-            # 调试：检查前几个像素值
-            if width * height > 0:
-                debug_pixel = pixels_bgra[0, 0]
-                debug_rgb = pixels_rgb[0, 0]
-                print(f"DEBUG: First pixel BGRA: {debug_pixel} -> RGB: {debug_rgb}")
             
             return pixels_rgb
             
