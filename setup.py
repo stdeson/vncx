@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="vncx",
-    version="0.1.0",
+    version="1.0.0",
     author="stdeson",
     author_email="stdeson@gmail.com",
     description="A lightweight VNC client library for Python",
@@ -29,5 +29,6 @@ setup(
     install_requires=[
         "numpy>=1.18.0",
         "opencv-python>=4.2.0",
+        "pycryptodome",
     ],
 )

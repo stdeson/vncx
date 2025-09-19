@@ -28,8 +28,9 @@ class VNCClient:
         self.framebuffer = None
         self._last_frame = None
         self._frame_updated = False
+        self._connect()
         
-    def connect(self):
+    def _connect(self):
         """连接到 VNC 服务器并进行 RFB 协议握手"""
         # 建立 TCP 连接（带超时）
         self.socket.settimeout(self.timeout)
@@ -80,6 +81,8 @@ class VNCClient:
         # 初始化 framebuffer
         self.framebuffer = np.zeros((self.height, self.width, 3), dtype=np.uint8)
         self._last_frame = self.framebuffer.copy()
+        # 立即请求一次屏幕更新以获取初始帧
+        self._request_initial_frame()
 
     def _vnc_auth(self):
         """处理 VNC 认证 - 按照 RFC 6143 协议使用 DES 加密"""
@@ -215,12 +218,12 @@ class VNCClient:
         
         # 更新主 framebuffer 并维护帧缓冲
         if x == 0 and y == 0 and width == self.width and height == self.height:
-            # 全屏更新，直接替换
+            print('全屏更新，直接替换')
             self.framebuffer = region_data.copy()
             self._last_frame = self.framebuffer.copy()
             self._frame_updated = True
         else:
-            # 区域更新，合并到现有帧
+            print('区域更新，合并到现有帧')
             if self.framebuffer is None:
                 # 初始化framebuffer
                 self.framebuffer = np.zeros((self.height, self.width, 3), dtype=np.uint8)
@@ -400,3 +403,33 @@ class VNCClient:
         """按下并释放键盘按键"""
         self.key_down(key_code)
         self.key_up(key_code)
+        
+    def _request_initial_frame(self):
+        """在连接建立后立即请求初始帧，确保第一次截图不是全黑"""
+        # 发送全屏更新请求
+        request = pack_framebuffer_update_request(False, 0, 0, self.width, self.height)
+        self.socket.send(request)
+        
+        # 接收并处理服务器响应
+        try:
+            response = self._recv_with_timeout(4, "initial framebuffer update response")
+            msg_type, num_rectangles = struct.unpack("!B x H", response)
+            
+            if msg_type != SERVER_FRAMEBUFFER_UPDATE:
+                return
+            
+            # 处理所有矩形区域
+            for _ in range(num_rectangles):
+                rect_header = self._recv_with_timeout(12, "initial rectangle header")
+                rect_x, rect_y, rect_width, rect_height, encoding = struct.unpack("!HH HH i", rect_header)
+                
+                if encoding == ENCODING_RAW:
+                    if self.pixel_format is None:
+                        # 跳过像素数据（不解析，只为了清空缓冲区）
+                        pixel_data_size = rect_width * rect_height * 4  # 假设32位像素格式
+                    else:
+                        bytes_per_pixel = self.pixel_format.bits_per_pixel // 8
+                        pixel_data_size = rect_width * rect_height * bytes_per_pixel
+                    self._recv_with_timeout(pixel_data_size, "initial pixel data")
+        except Exception as e:
+            print(f"初始帧请求失败（不影响后续操作）: {e}")
