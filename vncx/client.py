@@ -284,27 +284,16 @@ class VNCClient:
         if self.pixel_format is None:
             raise Exception("Pixel format not initialized - connection may have failed")
         bytes_per_pixel = self.pixel_format.bits_per_pixel // 8
-        
         if bytes_per_pixel == 4:  # 32-bit
             # 直接解析为BGRA格式（很多VNC服务器使用这种格式）
             pixels_bgra = np.frombuffer(data, dtype=np.uint8).reshape(height, width, 4)
-            
             # 转换为RGB（丢弃alpha通道）
             # BGRA -> RGB: 取BGR通道，忽略A通道
             pixels_rgb = pixels_bgra[:, :, [2, 1, 0]]  # BGR -> RGB
-            
-            # 调试：检查前几个像素值
-            if width * height > 0:
-                debug_pixel = pixels_bgra[0, 0]
-                debug_rgb = pixels_rgb[0, 0]
-                print(f"DEBUG: First pixel BGRA: {debug_pixel} -> RGB: {debug_rgb}")
-            
             return pixels_rgb
-            
         elif bytes_per_pixel == 3:  # 24-bit RGB
             pixels = np.frombuffer(data, dtype=np.uint8).reshape(height, width, 3)
             return pixels
-            
         elif bytes_per_pixel == 2:  # 16-bit
             # 处理 16-bit 格式
             pixels_16 = np.frombuffer(data, dtype=np.uint16).reshape(height, width)
