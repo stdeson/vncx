@@ -17,7 +17,6 @@ def main():
     try:
         # 连接到 VNC 服务器
         print("Connecting to VNC server...")
-        client.connect()
         
         # 截取全屏
         print("Capturing full screen...")

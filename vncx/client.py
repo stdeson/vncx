@@ -24,12 +24,14 @@ class VNCClient:
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.width = 0
         self.height = 0
+        self._mouse_pos = (0, 0)  # 跟踪当前鼠标位置
         self.pixel_format = None
         self.framebuffer = None
         self._last_frame = None
         self._frame_updated = False
+        self._connect()
         
-    def connect(self):
+    def _connect(self):
         """连接到 VNC 服务器并进行 RFB 协议握手"""
         # 建立 TCP 连接（带超时）
         self.socket.settimeout(self.timeout)
@@ -80,6 +82,8 @@ class VNCClient:
         # 初始化 framebuffer
         self.framebuffer = np.zeros((self.height, self.width, 3), dtype=np.uint8)
         self._last_frame = self.framebuffer.copy()
+        # 立即请求一次屏幕更新以获取初始帧
+        self._request_initial_frame()
 
     def _vnc_auth(self):
         """处理 VNC 认证 - 按照 RFC 6143 协议使用 DES 加密"""
@@ -215,7 +219,7 @@ class VNCClient:
         
         # 更新主 framebuffer 并维护帧缓冲
         if x == 0 and y == 0 and width == self.width and height == self.height:
-            # 全屏更新，直接替换
+            # '全屏更新，直接替换
             self.framebuffer = region_data.copy()
             self._last_frame = self.framebuffer.copy()
             self._frame_updated = True
@@ -317,71 +321,52 @@ class VNCClient:
             
     def mouse_move(self, x: int, y: int):
         """移动鼠标到指定坐标"""
-        if not self.socket:
-            raise Exception("Not connected to VNC server")
-        
-        # 发送鼠标移动事件（不按任何按键）
+        # 更新并发送鼠标位置
+        self._mouse_pos = (x, y)
         pointer_event = pack_pointer_event(0, x, y)
         self.socket.send(pointer_event)
         
-    def mouse_click(self, button: int):
+    def mouse_click(self, button: int, sleep_time=50):
         """点击鼠标按键 (1=左键, 2=中键, 4=右键)"""
         self.mouse_down(button)
+        time.sleep(sleep_time / 1000)
         self.mouse_up(button)
         
     def mouse_down(self, button: int):
         """按下鼠标按键"""
-        if not self.socket:
-            raise Exception("Not connected to VNC server")
-        
-        # 获取当前鼠标位置（简化处理，使用屏幕中心）
-        x, y = self.width // 2, self.height // 2
+        # 使用当前鼠标位置
+        x, y = self._mouse_pos
         pointer_event = pack_pointer_event(button, x, y)
         self.socket.send(pointer_event)
         
     def mouse_up(self, button: int):
         """释放鼠标按键"""
-        if not self.socket:
-            raise Exception("Not connected to VNC server")
-        
-        # 获取当前鼠标位置（简化处理，使用屏幕中心）
-        x, y = self.width // 2, self.height // 2
+        # 使用当前鼠标位置
+        x, y = self._mouse_pos
         pointer_event = pack_pointer_event(0, x, y)  # 按键状态为 0 表示释放
         self.socket.send(pointer_event)
         
     def mouse_roll_up(self):
         """鼠标滚轮向上"""
-        if not self.socket:
-            raise Exception("Not connected to VNC server")
-        
         # 鼠标滚轮向上通常是按钮 8
-        x, y = self.width // 2, self.height // 2
+        x, y = self._mouse_pos
         self.socket.send(pack_pointer_event(8, x, y))  # 按下
         self.socket.send(pack_pointer_event(0, x, y))  # 释放
         
     def mouse_roll_down(self):
         """鼠标滚轮向下"""
-        if not self.socket:
-            raise Exception("Not connected to VNC server")
-        
         # 鼠标滚轮向下通常是按钮 16
-        x, y = self.width // 2, self.height // 2
+        x, y = self._mouse_pos
         self.socket.send(pack_pointer_event(16, x, y))  # 按下
         self.socket.send(pack_pointer_event(0, x, y))   # 释放
         
     def key_down(self, key_code: int):
         """按下键盘按键"""
-        if not self.socket:
-            raise Exception("Not connected to VNC server")
-        
         key_event = pack_key_event(True, key_code)
         self.socket.send(key_event)
         
     def key_up(self, key_code: int):
         """释放键盘按键"""
-        if not self.socket:
-            raise Exception("Not connected to VNC server")
-        
         key_event = pack_key_event(False, key_code)
         self.socket.send(key_event)
         
@@ -389,3 +374,30 @@ class VNCClient:
         """按下并释放键盘按键"""
         self.key_down(key_code)
         self.key_up(key_code)
+        
+    def _request_initial_frame(self):
+        """在连接建立后立即请求初始帧，确保第一次截图不是全黑"""
+        # 发送全屏更新请求
+        request = pack_framebuffer_update_request(False, 0, 0, self.width, self.height)
+        self.socket.send(request)
+        # 接收并处理服务器响应
+        try:
+            response = self._recv_with_timeout(4, "initial framebuffer update response")
+            msg_type, num_rectangles = struct.unpack("!B x H", response)
+            if msg_type != SERVER_FRAMEBUFFER_UPDATE:
+                return
+            # 处理所有矩形区域
+            for _ in range(num_rectangles):
+                rect_header = self._recv_with_timeout(12, "initial rectangle header")
+                rect_x, rect_y, rect_width, rect_height, encoding = struct.unpack("!HH HH i", rect_header)
+                
+                if encoding == ENCODING_RAW:
+                    if self.pixel_format is None:
+                        # 跳过像素数据（不解析，只为了清空缓冲区）
+                        pixel_data_size = rect_width * rect_height * 4  # 假设32位像素格式
+                    else:
+                        bytes_per_pixel = self.pixel_format.bits_per_pixel // 8
+                        pixel_data_size = rect_width * rect_height * bytes_per_pixel
+                    self._recv_with_timeout(pixel_data_size, "initial pixel data")
+        except Exception as e:
+            print(f"初始帧请求失败（不影响后续操作）: {e}")
