@@ -27,7 +27,8 @@ setup(
     ],
     python_requires=">=3.7",
     install_requires=[
-        "numpy>=1.18.0",
-        "opencv-python>=4.2.0",
+        "numpy",
+        "opencv-python-headless",
+        "pycryptodome",
     ],
 )
